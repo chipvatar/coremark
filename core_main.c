@@ -185,7 +185,7 @@ main(int argc, char *argv[])
 #elif (MEM_METHOD == MEM_MALLOC)
     for (i = 0; i < MULTITHREAD; i++)
     {
-        ee_s32 malloc_override = get_seed(7);
+        ee_s32 malloc_override = get_seed_32(7);
         if (malloc_override != 0)
             results[i].size = malloc_override;
         else
