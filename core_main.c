@@ -49,7 +49,7 @@ static ee_u16 state_known_crc[]  = { (ee_u16)0x5e47,
                                     (ee_u16)0x8e3a,
                                     (ee_u16)0x8d84 };
 void *
-iterate(void *pres)
+iterate(void *pres, ee_u32 execs)
 {
     ee_u32        i;
     ee_u16        crc;
@@ -60,15 +60,29 @@ iterate(void *pres)
     res->crcmatrix           = 0;
     res->crcstate            = 0;
 
-    for (i = 0; i < iterations; i++)
+    if (execs & ID_LIST)
     {
-        crc      = core_bench_list(res, 1);
-        res->crc = crcu16(crc, res->crc);
-        crc      = core_bench_list(res, -1);
-        res->crc = crcu16(crc, res->crc);
-        if (i == 0)
-            res->crclist = res->crc;
+        for (i = 0; i < iterations; i++)
+        {
+            crc      = core_bench_list(res, 1);
+            res->crc = crcu16(crc, res->crc);
+            crc      = core_bench_list(res, -1);
+            res->crc = crcu16(crc, res->crc);
+            if (i == 0)
+                res->crclist = res->crc;
+        }
+        /*ee_printf("list iterate ends\n");*/
     }
+    if (execs & ID_MATRIX)
+    {
+        for (i = 0; i < iterations; i++)
+        {
+            ee_s16 retval = core_bench_matrix(&(res->mat), 100, res->crc);
+            if (res->crcmatrix == 0)
+                res->crcmatrix = retval;
+        }
+    }
+
     return NULL;
 }
 
@@ -120,6 +134,7 @@ main(int argc, char *argv[])
     ee_u16       seedcrc = 0;
     CORE_TICKS   total_time;
     core_results results[MULTITHREAD];
+    ee_u16        validation_flag = 0;
 #if (MEM_METHOD == MEM_STACK)
     ee_u8 stack_memblock[TOTAL_DATA_SIZE * MULTITHREAD];
 #endif
@@ -139,7 +154,7 @@ main(int argc, char *argv[])
     results[0].iterations = 1;
 #endif
     results[0].execs = get_seed_32(5);
-    if (results[0].execs == 0)
+    if (results[0].execs == 0 || results[0].execs == 1)
     { /* if not supplied, execute all algorithms */
         results[0].execs = ALL_ALGORITHMS_MASK;
     }
@@ -147,6 +162,7 @@ main(int argc, char *argv[])
     if ((results[0].seed1 == 0) && (results[0].seed2 == 0)
         && (results[0].seed3 == 0))
     { /* performance run */
+        validation_flag = 1;
         results[0].seed1 = 0;
         results[0].seed2 = 0;
         results[0].seed3 = 0x66;
@@ -154,6 +170,7 @@ main(int argc, char *argv[])
     if ((results[0].seed1 == 1) && (results[0].seed2 == 0)
         && (results[0].seed3 == 0))
     { /* validation run */
+        validation_flag = 1;
         results[0].seed1 = 0x3415;
         results[0].seed2 = 0x3415;
         results[0].seed3 = 0x66;
@@ -248,7 +265,7 @@ for (i = 0; i < MULTITHREAD; i++)
         {
             results[0].iterations *= 10;
             start_time();
-            iterate(&results[0]);
+            iterate(&results[0], results[0].execs);
             stop_time();
             secs_passed = time_in_secs(get_time());
         }
@@ -279,7 +296,7 @@ for (i = 0; i < MULTITHREAD; i++)
         core_stop_parallel(&results[i]);
     }
 #else
-    iterate(&results[0]);
+    iterate(&results[0], results[0].execs);
 #endif
     stop_time();
     total_time = get_time();
@@ -289,71 +306,79 @@ for (i = 0; i < MULTITHREAD; i++)
     seedcrc = crc16(results[0].seed3, seedcrc);
     seedcrc = crc16(results[0].size, seedcrc);
 
-    switch (seedcrc)
-    {                /* test known output for common seeds */
-        case 0x8a02: /* seed1=0, seed2=0, seed3=0x66, size 2000 per algorithm */
-            known_id = 0;
-            ee_printf("6k performance run parameters for coremark.\n");
-            break;
-        case 0x7b05: /*  seed1=0x3415, seed2=0x3415, seed3=0x66, size 2000 per
-                        algorithm */
-            known_id = 1;
-            ee_printf("6k validation run parameters for coremark.\n");
-            break;
-        case 0x4eaf: /* seed1=0x8, seed2=0x8, seed3=0x8, size 400 per algorithm
-                      */
-            known_id = 2;
-            ee_printf("Profile generation run parameters for coremark.\n");
-            break;
-        case 0xe9f5: /* seed1=0, seed2=0, seed3=0x66, size 666 per algorithm */
-            known_id = 3;
-            ee_printf("2K performance run parameters for coremark.\n");
-            break;
-        case 0x18f2: /*  seed1=0x3415, seed2=0x3415, seed3=0x66, size 666 per
-                        algorithm */
-            known_id = 4;
-            ee_printf("2K validation run parameters for coremark.\n");
-            break;
-        default:
-            total_errors = -1;
-            break;
-    }
-    if (known_id >= 0)
+    if (validation_flag == 1)
     {
-        for (i = 0; i < default_num_contexts; i++)
-        {
-            results[i].err = 0;
-            if ((results[i].execs & ID_LIST)
-                && (results[i].crclist != list_known_crc[known_id]))
-            {
-                ee_printf("[%u]ERROR! list crc 0x%04x - should be 0x%04x\n",
-                          i,
-                          results[i].crclist,
-                          list_known_crc[known_id]);
-                results[i].err++;
-            }
-            if ((results[i].execs & ID_MATRIX)
-                && (results[i].crcmatrix != matrix_known_crc[known_id]))
-            {
-                ee_printf("[%u]ERROR! matrix crc 0x%04x - should be 0x%04x\n",
-                          i,
-                          results[i].crcmatrix,
-                          matrix_known_crc[known_id]);
-                results[i].err++;
-            }
-            if ((results[i].execs & ID_STATE)
-                && (results[i].crcstate != state_known_crc[known_id]))
-            {
-                ee_printf("[%u]ERROR! state crc 0x%04x - should be 0x%04x\n",
-                          i,
-                          results[i].crcstate,
-                          state_known_crc[known_id]);
-                results[i].err++;
-            }
-            total_errors += results[i].err;
+        switch (seedcrc)
+        {                /* test known output for common seeds */
+            case 0x8a02: /* seed1=0, seed2=0, seed3=0x66, size 2000 per algorithm */
+                known_id = 0;
+                ee_printf("6k performance run parameters for coremark.\n");
+                break;
+            case 0x7b05: /*  seed1=0x3415, seed2=0x3415, seed3=0x66, size 2000 per
+                            algorithm */
+                known_id = 1;
+                ee_printf("6k validation run parameters for coremark.\n");
+                break;
+            case 0x4eaf: /* seed1=0x8, seed2=0x8, seed3=0x8, size 400 per algorithm
+                        */
+                known_id = 2;
+                ee_printf("Profile generation run parameters for coremark.\n");
+                break;
+            case 0xe9f5: /* seed1=0, seed2=0, seed3=0x66, size 666 per algorithm */
+                known_id = 3;
+                ee_printf("2K performance run parameters for coremark.\n");
+                break;
+            case 0x18f2: /*  seed1=0x3415, seed2=0x3415, seed3=0x66, size 666 per
+                            algorithm */
+                known_id = 4;
+                ee_printf("2K validation run parameters for coremark.\n");
+                break;
+            default:
+                total_errors = -1;
+                break;
         }
+        if (known_id >= 0)
+        {
+            for (i = 0; i < default_num_contexts; i++)
+            {
+                results[i].err = 0;
+                if ((results[i].execs & ID_LIST)
+                    && (results[i].crclist != list_known_crc[known_id]))
+                {
+                    ee_printf("[%u]ERROR! list crc 0x%04x - should be 0x%04x\n",
+                            i,
+                            results[i].crclist,
+                            list_known_crc[known_id]);
+                    results[i].err++;
+                }
+                if ((results[i].execs & ID_MATRIX)
+                    && (results[i].crcmatrix != matrix_known_crc[known_id]))
+                {
+                    ee_printf("[%u]ERROR! matrix crc 0x%04x - should be 0x%04x\n",
+                            i,
+                            results[i].crcmatrix,
+                            matrix_known_crc[known_id]);
+                    results[i].err++;
+                }
+                if ((results[i].execs & ID_STATE)
+                    && (results[i].crcstate != state_known_crc[known_id]))
+                {
+                    ee_printf("[%u]ERROR! state crc 0x%04x - should be 0x%04x\n",
+                            i,
+                            results[i].crcstate,
+                            state_known_crc[known_id]);
+                    results[i].err++;
+                }
+                total_errors += results[i].err;
+            }
+        }
+        total_errors += check_data_types();
     }
-    total_errors += check_data_types();
+    else
+    {
+        total_errors = -1;
+    }
+
     /* and report results */
     ee_printf("CoreMark Size    : %lu\n", (long unsigned)results[0].size);
     ee_printf("Total ticks      : %lu\n", (long unsigned)total_time);
@@ -398,11 +423,11 @@ for (i = 0; i < MULTITHREAD; i++)
             ee_printf("[%d]crcstate      : 0x%04x\n", i, results[i].crcstate);
     for (i = 0; i < default_num_contexts; i++)
         ee_printf("[%d]crcfinal      : 0x%04x\n", i, results[i].crc);
-    if (total_errors == 0)
+    if (validation_flag == 1 & total_errors == 0)
     {
         ee_printf(
-            "Correct operation validated. See README.md for run and reporting "
-            "rules.\n");
+            "Correct operation validated.\n");
+/*
 #if HAS_FLOAT
         if (known_id == 3)
         {
@@ -423,13 +448,16 @@ for (i = 0; i < MULTITHREAD; i++)
             ee_printf("\n");
         }
 #endif
+*/
     }
-    if (total_errors > 0)
+    if (validation_flag == 1 & total_errors > 0)
         ee_printf("Errors detected\n");
+    /*
     if (total_errors < 0)
         ee_printf(
             "Cannot validate operation for these seed values, please compare "
             "with results on a known platform.\n");
+    */
 
 #if (MEM_METHOD == MEM_MALLOC)
     for (i = 0; i < MULTITHREAD; i++)

@@ -45,7 +45,7 @@ Original Author: Shay Gal-on
 #endif
 
 /* Actual benchmark execution in iterate */
-void *iterate(void *pres);
+void *iterate(void *pres, ee_u32 execs);
 
 /* Typedef: secs_ret
         For machines that have floating point support, get number of seconds as
